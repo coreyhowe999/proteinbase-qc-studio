@@ -1,0 +1,17 @@
+name: Staircase violation
+category: unexpected_order
+source: seed
+description: Response order does not track the antigen-concentration order (no clean
+  staircase).
+mode: spec
+spec:
+  any:
+  - feature: order_respected
+    op: ==
+    value: false
+  - feature: spearman_conc_response
+    op: <
+    value: 0.85
+rationale: A clean titration rises monotonically with concentration. Inversions or
+  low rank-correlation mean the staircase is broken.
+created: '2026-06-05'

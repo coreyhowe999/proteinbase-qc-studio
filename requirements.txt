@@ -1,0 +1,11 @@
+streamlit==1.40.2
+streamlit-aggrid==1.2.1.post2
+st-clickable-images==0.0.3
+plotly==5.24.1
+matplotlib==3.10.9
+pandas==2.2.3
+numpy==2.1.3
+scipy==1.14.1
+pyyaml==6.0.2
+requests==2.32.3
+anthropic==0.69.0

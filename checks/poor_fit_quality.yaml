@@ -1,0 +1,12 @@
+name: Poor fit quality
+category: fit_quality
+source: seed
+description: The 1:1 kinetic model fits the raw trace poorly (low R2).
+mode: spec
+spec:
+  feature: mean_r2
+  op: <
+  value: 0.5
+rationale: mean R2 below ~0.5 (dataset p25) means the fitted kinetics do not describe
+  the data; KD/kon/koff are suspect.
+created: '2026-06-05'

@@ -1,0 +1,27 @@
+name: Aggregation (slow-on / slow-off)
+category: aggregation
+source: seed
+description: Binder-like signal that associates slowly and barely dissociates (slow
+  on-rate + slow off-rate), the classic aggregation / non-1:1 signature.
+mode: spec
+spec:
+  all:
+  - feature: dissoc_retention
+    op: '>'
+    value: 0.85
+  - feature: assoc_completion
+    op: <
+    value: 0.7
+  - feature: order_respected
+    op: ==
+    value: true
+  - feature: max_response
+    op: '>'
+    value: 5
+rationale: 'Aggregation / mass-transport-limited binders show a creeping association
+  that doesn''t reach equilibrium in the contact time (assoc_completion<0.7 = slow
+  on) and a dissociation phase that stays flat near the bound level (dissoc_retention>0.85
+  = slow off). Requiring a clean concentration-ordered staircase and real signal (>5
+  nm) avoids flagging noise. Validated against fitted kinetics: recovers 40/44 measurements
+  with kon<1e4 & koff<1e-4.'
+created: '2026-06-05'

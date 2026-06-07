@@ -1,0 +1,16 @@
+name: Saturation
+category: saturation
+source: seed
+description: Top concentration adds almost no further response (signal saturated).
+mode: spec
+spec:
+  all:
+  - feature: saturation_top_step_frac
+    op: <
+    value: 0.05
+  - feature: max_response
+    op: '>'
+    value: 20
+rationale: When a 3x concentration jump adds <5% response on a high-signal curve,
+  the sensor is saturated and koff/Req are biased.
+created: '2026-06-05'

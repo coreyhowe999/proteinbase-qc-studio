@@ -1,0 +1,12 @@
+name: Baseline drift
+category: drift
+source: seed
+description: Baseline is sloping rather than flat.
+mode: spec
+spec:
+  feature: max_baseline_drift
+  op: '>'
+  value: 0.5
+rationale: A baseline slope above 0.5 nm/s (dataset p95) corrupts response readout
+  and fit quality.
+created: '2026-06-05'

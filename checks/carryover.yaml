@@ -1,0 +1,12 @@
+name: Carryover
+category: carryover
+source: seed
+description: Complex does not return to baseline at the end of dissociation.
+mode: spec
+spec:
+  feature: carryover_frac
+  op: '>'
+  value: 0.3
+rationale: Residual signal >30% of max at the end of dissociation indicates carryover
+  / incomplete regeneration.
+created: '2026-06-05'

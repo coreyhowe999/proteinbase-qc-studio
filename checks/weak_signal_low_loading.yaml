@@ -1,0 +1,16 @@
+name: Weak signal / low loading
+category: weak_signal
+source: seed
+description: Overall binding response is near the noise floor.
+mode: spec
+spec:
+  any:
+  - feature: weak_signal
+    op: ==
+    value: true
+  - feature: max_response
+    op: <
+    value: 0.6
+rationale: max_response below ~0.6 nm or SNR<5 is indistinguishable from baseline;
+  KD fits are unreliable.
+created: '2026-06-05'

@@ -1,0 +1,19 @@
+# secrets - never publish
+.env
+.streamlit/secrets.toml
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# heavy / regenerable caches (curves stream from ProteinBase's public CDN at runtime)
+data/curves/
+data/*.log
+data/video/*.webm
+
+# scratch / analysis artifacts
+data/_*
+data/shots/_*
+data/proteinbase_all.csv
+data/*.csv
