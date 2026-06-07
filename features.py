@@ -21,7 +21,16 @@ import config
 
 
 def load_curve(measurement_id: str) -> dict:
+    """Load a kinetic-curve JSON. Downloads from ProteinBase's public CDN and
+    caches locally on first miss (so it works on hosts that ship no curve cache,
+    e.g. Streamlit Cloud)."""
     p = config.CURVES / f"{measurement_id}.json"
+    if not p.exists() or p.stat().st_size == 0:
+        import requests
+        r = requests.get(config.CURVE_BASE + measurement_id + ".json", timeout=30)
+        r.raise_for_status()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(r.content)
     return json.loads(p.read_text())
 
 
