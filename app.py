@@ -241,6 +241,28 @@ def effective_flag(mid):
     return ss.flag_override.get(mid, bool(flags_by_id.get(mid)))
 
 
+def feature_stats_text():
+    """Percentile distributions over REAL-SIGNAL curves, so Claude picks tail
+    thresholds instead of median-ish ones. Computed once per session."""
+    if "_feat_stats" in ss:
+        return ss._feat_stats
+    import numpy as np
+    real = [f for f in feats.values() if f.get("valid") and (f.get("max_response") or 0) > 5
+            and f.get("order_respected") and (f.get("snr") or 0) > 10]
+    keys = ["assoc_completion", "dissoc_retention", "carryover_frac", "max_response", "snr",
+            "spearman_conc_response", "max_baseline_drift", "mean_r2", "koff", "kon", "kd"]
+    lines = [f"FEATURE DISTRIBUTIONS across {len(real)} real-signal curves "
+             "(order_respected, max_response>5, snr>10) — set tail thresholds relative to these:"]
+    for k in keys:
+        vals = [f[k] for f in real if isinstance(f.get(k), (int, float)) and f[k] == f[k]]
+        if len(vals) < 20:
+            continue
+        q = np.percentile(vals, [5, 25, 50, 75, 95])
+        lines.append(f"  {k}: p5={q[0]:.4g} p25={q[1]:.4g} median={q[2]:.4g} p75={q[3]:.4g} p95={q[4]:.4g}")
+    ss._feat_stats = "\n".join(lines)
+    return ss._feat_stats
+
+
 def suggest_negatives(pos_ids, n=4):
     """Contrasting 'normal' curves for the QC Builder: clean binders that pass
     EVERY current check (no flags), with a good staircase, fit and signal -
@@ -459,16 +481,30 @@ with tab_review:
                         placeholder="describe your new filter, or select multiple examples as reference issues")
     submit = cc2.button("Submit", type="primary", use_container_width=True,
                         disabled=config.anthropic_key() is None)
+    strict_pct = st.slider(
+        "Strictness — flag at most this % of all samples (favours false negatives; "
+        "auto-tightens if the first attempt is broader)", 1, 30, 8, key="strict_pct")
     if submit:
         if not nl.strip() and not sel_ids:
             st.warning("Describe a filter or tick example samples in the table.")
         else:
-            with st.spinner("Claude is analysing the selected curves (images + data) for a common pattern…"):
+            with st.spinner("Claude is analysing the curves (image + data) and calibrating strict thresholds…"):
                 try:
                     pos = [(m, feats.get(m, {}), png_thumb(m, 520, 360)) for m in sel_ids[:8] if m in feats]
                     neg = ([(m, feats.get(m, {}), png_thumb(m, 520, 360)) for m in neg_ids if m in feats]
                            if inc_neg else [])
-                    ss.draft = engine.build_check_llm(nl, positives=pos, negatives=neg)
+                    stats = feature_stats_text()
+                    d = engine.build_check_llm(nl, positives=pos, negatives=neg, feature_stats=stats)
+                    # auto-tighten if it flags more than the strictness target
+                    target = strict_pct / 100.0
+                    rounds = 0
+                    while rounds < 2 and len(engine.flag_dataset(d, feats)) > target * len(feats):
+                        n_now = len(engine.flag_dataset(d, feats))
+                        d = engine.tighten_check_llm(d, n_now, len(feats), target_frac=target,
+                                                     feature_stats=stats)
+                        rounds += 1
+                    d["_tightened"] = rounds
+                    ss.draft = d
                 except Exception as e:
                     st.error(f"Build failed: {e}")
 
@@ -478,12 +514,22 @@ with tab_review:
         if d.get("pattern_summary"):
             st.info(d["pattern_summary"])
         matches = engine.flag_dataset(d, feats)
-        st.caption(f"Matches **{len(matches)}** of {len(feats)} measurements across all ProteinBase.")
+        pct = 100 * len(matches) / max(len(feats), 1)
+        note = f" · auto-tightened ×{d['_tightened']}" if d.get("_tightened") else ""
+        st.caption(f"Matches **{len(matches)}** of {len(feats)} ({pct:.1f}%) across all ProteinBase{note}.")
         with st.expander("check definition"):
             st.write(d.get("description", ""))
             st.caption("Why this works: " + d.get("rationale", ""))
             st.code(json.dumps(d.get("spec", {}), indent=1) if d.get("mode") == "spec"
                     else d.get("code", ""), language="json")
+        if st.button("🔧 Tighten further (stricter, fewer matches)"):
+            with st.spinner("Tightening…"):
+                d2 = engine.tighten_check_llm(d, len(matches), len(feats),
+                                              target_frac=max(0.01, len(matches) / len(feats) / 2),
+                                              feature_stats=feature_stats_text())
+                d2["_tightened"] = d.get("_tightened", 0) + 1
+                ss.draft = d2
+                st.rerun()
         bb1, bb2 = st.columns([0.32, 0.68])
         if bb1.button("✅ Save & apply as filter", type="primary"):
             engine.save_check(d)

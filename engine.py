@@ -168,11 +168,28 @@ differ from normal curves, state that common pattern in `pattern_summary`, then
 encode it as a check whose thresholds actually separate the examples. This is how
 a reusable detector is discovered from a handful of flagged samples.
 
+STRICTNESS: prefer FALSE NEGATIVES over false positives. A QC check should flag
+only a small, unambiguous minority (aim well under ~10%% of the dataset). Be
+conservative:
+- If the criterion lists multiple conditions ("X and Y", "A with B"), require ALL
+  of them with `all`. Do NOT use `any` (OR) unless the conditions are genuinely
+  interchangeable ways of saying the SAME thing. Two different physical phenomena
+  joined by "and" must both be required.
+- Shape features (assoc_completion, dissoc_retention, carryover_frac, staircase
+  metrics) are MEANINGLESS on weak/noisy curves and take wild, unphysical values
+  there. Whenever the criterion is about curve SHAPE, you MUST also require real
+  binding signal in the SAME `all` block: order_respected == true AND
+  max_response above a clear value (e.g. > 8) AND/OR snr > 12. This stops the
+  check firing on noise.
+- Put thresholds at the EXTREME TAIL of the distribution (appended below at the
+  end of this prompt), e.g. the 5th/95th percentile of real-signal curves, not
+  near the median. "really slow", "very", "clear" => push to the tail.
+
 Return a check via the emit_check tool. Prefer mode="spec". Only use mode="code"
 (a single Python boolean expression over `f` the feature dict and `np`) when the
 criterion truly cannot be expressed as a spec. A measurement is FLAGGED when the
-check evaluates True. Keep it simple and robust; explain your reasoning in
-`rationale`.""" % (featmod.FEATURE_GLOSSARY, SPEC_GRAMMAR)
+check evaluates True. Explain your reasoning in `rationale`.""" % (
+    featmod.FEATURE_GLOSSARY, SPEC_GRAMMAR)
 
 _TOOL = {
     "name": "emit_check",
@@ -273,20 +290,45 @@ def _curve_content(label: str, mid: str, feats: dict, png: bytes | None) -> list
     return blocks
 
 
-def build_check_llm(nl: str, current=None, positives=None, negatives=None, model=None) -> dict:
-    """Author a check with Claude.
-
-    current   : optional (mid, feats, png_bytes) the scientist is viewing now
-    positives : [(mid, feats, png_bytes)] tagged as SHOULD flag
-    negatives : [(mid, feats, png_bytes)] tagged as should NOT flag
-    Each curve is shown to the model as BOTH a rendered image and its numeric data.
-    """
+def _client():
     import anthropic
     key = config.anthropic_key()
     if not key:
         raise RuntimeError("No ANTHROPIC_API_KEY found (checked env + WSL .env).")
-    client = anthropic.Anthropic(api_key=key)
+    return anthropic.Anthropic(api_key=key)
 
+
+def _emit(client, messages, system, model=None):
+    """One tool-forced call -> (resp, check dict), with a spec-grammar repair round."""
+    def call(msgs):
+        resp = client.messages.create(
+            model=model or config.ANTHROPIC_MODEL, max_tokens=1500, system=system,
+            tools=[_TOOL], tool_choice={"type": "tool", "name": "emit_check"}, messages=msgs)
+        block = next(b for b in resp.content if getattr(b, "type", None) == "tool_use")
+        return resp, block
+
+    resp, block = call(messages)
+    check = dict(block.input)
+    if check.get("mode") == "spec" and validate_spec(check.get("spec", {})):
+        err = validate_spec(check.get("spec", {}))
+        messages = messages + [
+            {"role": "assistant", "content": resp.content},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": block.id,
+             "is_error": True, "content": f"The spec was rejected: {err}\n\nRe-emit using "
+             f"ONLY this grammar:\n{SPEC_GRAMMAR}"}]}]
+        _, block = call(messages)
+        check = dict(block.input)
+    return check
+
+
+def build_check_llm(nl: str, current=None, positives=None, negatives=None, model=None,
+                    feature_stats: str = "") -> dict:
+    """Author a check with Claude.
+
+    current/positives/negatives : (mid, feats, png_bytes) - shown as image + data.
+    feature_stats : text block of feature distribution percentiles (for tail thresholds).
+    """
+    client = _client()
     content = [{"type": "text", "text":
                 f"Criterion: {nl.strip() or '(infer the common pattern from the tagged examples)'}"}]
     if current:
@@ -296,39 +338,36 @@ def build_check_llm(nl: str, current=None, positives=None, negatives=None, model
     for c in (negatives or []):
         content += _curve_content("Example that should NOT be flagged", *c)
 
-    messages = [{"role": "user", "content": content}]
-
-    def _call():
-        resp = client.messages.create(
-            model=model or config.ANTHROPIC_MODEL,
-            max_tokens=1500,
-            system=SYSTEM,
-            tools=[_TOOL],
-            tool_choice={"type": "tool", "name": "emit_check"},
-            messages=messages,
-        )
-        block = next(b for b in resp.content if getattr(b, "type", None) == "tool_use")
-        return resp, block
-
-    resp, block = _call()
-    check = dict(block.input)
-
-    # one repair round if a spec came back malformed
-    if check.get("mode") == "spec" and validate_spec(check.get("spec", {})):
-        err = validate_spec(check.get("spec", {}))
-        messages.append({"role": "assistant", "content": resp.content})
-        messages.append({"role": "user", "content": [{
-            "type": "tool_result", "tool_use_id": block.id, "is_error": True,
-            "content": (f"The spec was rejected: {err}\n\nRe-emit the check using "
-                        f"ONLY this grammar:\n{SPEC_GRAMMAR}")}]})
-        _, block2 = _call()
-        check = dict(block2.input)
-
+    system = SYSTEM + ("\n\n" + feature_stats if feature_stats else "")
+    check = _emit(client, [{"role": "user", "content": content}], system, model)
     check["source"] = "llm"
     check["nl"] = nl
     if positives:
         check["examples"] = [c[0] for c in positives]
     return check
+
+
+def tighten_check_llm(check: dict, flagged_n: int, total: int, target_frac: float = 0.08,
+                      feature_stats: str = "", model=None) -> dict:
+    """Ask Claude to make an over-broad check stricter (fewer false positives)."""
+    client = _client()
+    spec = json.dumps(check.get("spec")) if check.get("mode") == "spec" else check.get("code")
+    msg = (f"This check flags {flagged_n} of {total} measurements "
+           f"({100*flagged_n/max(total,1):.0f}%), which is TOO BROAD for a QC flag.\n"
+           f"Criterion it targets: {check.get('nl') or check.get('description','')}\n"
+           f"Current {check.get('mode')}: {spec}\n\n"
+           f"Re-emit a STRICTER version that flags well under {int(target_frac*100)}% — "
+           f"prefer false negatives over false positives. Require ALL conditions with `all` "
+           f"(no `any`/OR across different phenomena), push thresholds to the extreme tail, and "
+           f"require real binding signal (order_respected, max_response, snr) so shape features "
+           f"aren't evaluated on noise. Keep the same name/category.")
+    system = SYSTEM + ("\n\n" + feature_stats if feature_stats else "")
+    out = _emit(client, [{"role": "user", "content": msg}], system, model)
+    out["source"] = "llm"
+    out["nl"] = check.get("nl", "")
+    if check.get("examples"):
+        out["examples"] = check["examples"]
+    return out
 
 
 # ------------------------------------------------------- run across a dataset
