@@ -481,9 +481,11 @@ with tab_review:
                         placeholder="describe your new filter, or select multiple examples as reference issues")
     submit = cc2.button("Submit", type="primary", use_container_width=True,
                         disabled=config.anthropic_key() is None)
-    strict_pct = st.slider(
-        "Strictness — flag at most this % of all samples (favours false negatives; "
-        "auto-tightens if the first attempt is broader)", 1, 30, 8, key="strict_pct")
+    strict_label = st.radio(
+        "Strictness", ["High", "Medium", "Low"], index=1, horizontal=True, key="strict_label",
+        help="How rare a flag should be. High = fewest matches (favours false negatives); "
+             "the build auto-tightens to fit.")
+    _STRICT_TARGET = {"High": 0.03, "Medium": 0.08, "Low": 0.18}
     if submit:
         if not nl.strip() and not sel_ids:
             st.warning("Describe a filter or tick example samples in the table.")
@@ -496,7 +498,7 @@ with tab_review:
                     stats = feature_stats_text()
                     d = engine.build_check_llm(nl, positives=pos, negatives=neg, feature_stats=stats)
                     # auto-tighten if it flags more than the strictness target
-                    target = strict_pct / 100.0
+                    target = _STRICT_TARGET[strict_label]
                     rounds = 0
                     while rounds < 2 and len(engine.flag_dataset(d, feats)) > target * len(feats):
                         n_now = len(engine.flag_dataset(d, feats))
@@ -517,6 +519,21 @@ with tab_review:
         pct = 100 * len(matches) / max(len(feats), 1)
         note = f" · auto-tightened ×{d['_tightened']}" if d.get("_tightened") else ""
         st.caption(f"Matches **{len(matches)}** of {len(feats)} ({pct:.1f}%) across all ProteinBase{note}.")
+
+        # preview a spread of matched curves so you can eyeball them before saving
+        if matches:
+            step = max(1, len(matches) // 6)
+            preview = matches[::step][:6]
+            st.caption("Preview of matched curves (a spread across the matches):")
+            pcols = st.columns(len(preview))
+            for c, m in zip(pcols, preview):
+                with c:
+                    try:
+                        st.image(png_thumb(m, 240, 150))
+                    except Exception:
+                        st.caption("(curve load error)")
+                    st.caption(short_name(PROT_NAME.get(m, ""), 14))
+
         with st.expander("check definition"):
             st.write(d.get("description", ""))
             st.caption("Why this works: " + d.get("rationale", ""))

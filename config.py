@@ -31,15 +31,17 @@ _ENV_PATHS = [
 def anthropic_key() -> str | None:
     if os.environ.get("ANTHROPIC_API_KEY"):
         return os.environ["ANTHROPIC_API_KEY"]
-    # Streamlit Cloud / hosted: read from st.secrets if the deployer opted in
-    try:
-        import streamlit as st
-        if "ANTHROPIC_API_KEY" in st.secrets:
-            v = st.secrets["ANTHROPIC_API_KEY"]
+    # Streamlit hosted: read from st.secrets, but ONLY touch it when a secrets
+    # file actually exists (otherwise st.secrets emits a noisy "no secrets" warning)
+    _secret_paths = [Path(".streamlit/secrets.toml"), Path.home() / ".streamlit" / "secrets.toml"]
+    if any(p.exists() for p in _secret_paths):
+        try:
+            import streamlit as st
+            v = st.secrets.get("ANTHROPIC_API_KEY")
             if v:
                 return v
-    except Exception:
-        pass
+        except Exception:
+            pass
     for p in _ENV_PATHS:
         try:
             if p.exists():
