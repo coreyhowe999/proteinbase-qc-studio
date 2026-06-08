@@ -205,9 +205,9 @@ if ss.get("gallery_target") != sel_target:
     ss.gallery_target = sel_target
 ss.setdefault("gallery_n", GRID_COLS * GRID_ROWS)
 
-# keep the selection valid for this target (gallery curves are valid too)
-valid_sel = set(gallery_pool) | set(work["measurement_id"])
-if ss.selected not in valid_sel:
+# default the viewer to the first row, but allow ANY measurement to stay selected
+# (e.g. a cross-target match clicked from the QC Builder match preview)
+if ss.selected is None or ss.selected not in URL:
     ss.selected = work["measurement_id"].iloc[0] if len(work) else (gallery_pool[0] if gallery_pool else None)
 
 feats = load_all_features(len(df))
@@ -520,19 +520,24 @@ with tab_review:
         note = f" · auto-tightened ×{d['_tightened']}" if d.get("_tightened") else ""
         st.caption(f"Matches **{len(matches)}** of {len(feats)} ({pct:.1f}%) across all ProteinBase{note}.")
 
-        # preview a spread of matched curves so you can eyeball them before saving
+        # preview a spread of matched curves (clickable -> load into the viewer above)
         if matches:
             step = max(1, len(matches) // 6)
             preview = matches[::step][:6]
-            st.caption("Preview of matched curves (a spread across the matches):")
-            pcols = st.columns(len(preview))
-            for c, m in zip(pcols, preview):
-                with c:
-                    try:
-                        st.image(png_thumb(m, 240, 150))
-                    except Exception:
-                        st.caption("(curve load error)")
-                    st.caption(short_name(PROT_NAME.get(m, ""), 14))
+            st.caption("Preview of matched curves — **click one to load it in the viewer above**:")
+            puris = [thumb_datauri(m) for m in preview]
+            pclick = clickable_images(
+                puris, titles=[PROT_NAME.get(m, "") for m in preview],
+                div_style={"display": "flex", "flex-wrap": "wrap", "gap": "5px"},
+                img_style={"height": "130px", "cursor": "pointer",
+                           "border": "1px solid #e5e7eb", "border-radius": "6px"},
+                key="preview_matches")
+            if pclick is not None and 0 <= pclick < len(preview):
+                pm = preview[pclick]
+                if pm != ss.get("preview_last_click"):
+                    ss.preview_last_click = pm
+                    ss.selected = pm
+                    st.rerun()
 
         with st.expander("check definition"):
             st.write(d.get("description", ""))
