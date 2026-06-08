@@ -168,6 +168,15 @@ differ from normal curves, state that common pattern in `pattern_summary`, then
 encode it as a check whose thresholds actually separate the examples. This is how
 a reusable detector is discovered from a handful of flagged samples.
 
+HARD RULE: your check MUST evaluate True for EVERY tagged example. Never set a
+threshold tighter than the examples' own values, and never require a feature that
+is null for an example. In particular kon/koff/kd are NULL for ~84%% of all
+measurements (only multi-concentration fits have them) — a check that requires
+kon/koff will silently miss most curves, INCLUDING examples that have no fit. So
+unless every tagged example has a non-null kon/koff, build the check from the
+always-present curve-SHAPE features (assoc_completion, dissoc_retention,
+carryover_frac, max_response, snr, order_respected) instead.
+
 STRICTNESS: prefer FALSE NEGATIVES over false positives. A QC check should flag
 only a small, unambiguous minority (aim well under ~10%% of the dataset). Be
 conservative:
@@ -340,6 +349,24 @@ def build_check_llm(nl: str, current=None, positives=None, negatives=None, model
 
     system = SYSTEM + ("\n\n" + feature_stats if feature_stats else "")
     check = _emit(client, [{"role": "user", "content": content}], system, model)
+
+    # safety net: a check built from examples MUST flag every example. If it
+    # misses some (e.g. it required null kon/koff), ask Claude to fix it.
+    if positives:
+        for _ in range(2):
+            missed = [p for p in positives if not run_check(check, p[1])]
+            if not missed:
+                break
+            payloads = "\n".join(json.dumps(curve_payload(p[1])) for p in missed)
+            cur_def = json.dumps(check.get("spec")) if check.get("mode") == "spec" else check.get("code")
+            check = _emit(client, [{"role": "user", "content":
+                f"The check you emitted FAILS to flag {len(missed)} of the tagged example curves it was "
+                f"built from — that is invalid; it MUST flag every tagged example. Missed examples' "
+                f"features:\n{payloads}\nCurrent check: {cur_def}\nRe-emit a check that evaluates True for "
+                f"ALL the tagged examples: loosen or drop any condition the examples don't satisfy "
+                f"(especially null kon/koff/kd), and rely on curve-shape features. Keep it as strict as "
+                f"possible while still matching every example."}], system, model)
+
     check["source"] = "llm"
     check["nl"] = nl
     if positives:

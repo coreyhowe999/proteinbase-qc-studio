@@ -497,13 +497,18 @@ with tab_review:
                            if inc_neg else [])
                     stats = feature_stats_text()
                     d = engine.build_check_llm(nl, positives=pos, negatives=neg, feature_stats=stats)
-                    # auto-tighten if it flags more than the strictness target
+                    # auto-tighten if it flags more than the strictness target, but
+                    # never tighten so far that it drops a tagged example
+                    pos_feats = [p[1] for p in pos]
                     target = _STRICT_TARGET[strict_label]
                     rounds = 0
                     while rounds < 2 and len(engine.flag_dataset(d, feats)) > target * len(feats):
                         n_now = len(engine.flag_dataset(d, feats))
-                        d = engine.tighten_check_llm(d, n_now, len(feats), target_frac=target,
-                                                     feature_stats=stats)
+                        d2 = engine.tighten_check_llm(d, n_now, len(feats), target_frac=target,
+                                                      feature_stats=stats)
+                        if pos_feats and any(not engine.run_check(d2, pf) for pf in pos_feats):
+                            break  # would drop a tagged example -> keep the looser version
+                        d = d2
                         rounds += 1
                     d["_tightened"] = rounds
                     ss.draft = d
