@@ -164,11 +164,11 @@ else:
     exp_targets = sorted(df["target"].dropna().unique())
 
 target_opts = ["All targets"] + exp_targets
-if "target_sel" in ss and ss.target_sel not in target_opts:
-    del ss["target_sel"]
-_tkw = {} if "target_sel" in ss else {
-    "index": target_opts.index("pd-l1") if "pd-l1" in target_opts else 0}
-sel_target = st.sidebar.selectbox("Target", target_opts, key="target_sel", **_tkw)
+# persist the choice across reruns; default to pd-l1, reset only if no longer valid
+ss.setdefault("target_sel", "pd-l1" if "pd-l1" in target_opts else target_opts[0])
+if ss.target_sel not in target_opts:
+    ss.target_sel = target_opts[0]
+sel_target = st.sidebar.selectbox("Target", target_opts, key="target_sel")
 all_targets = sel_target == "All targets"
 sel_kind = st.sidebar.radio("Show", ["All", "Binders", "Non-binders"], horizontal=True)
 search = st.sidebar.text_input("Search name / id", "")
@@ -297,7 +297,7 @@ tab_review, tab_flags = st.tabs(["\U0001f52c Review", "\U0001f6a9 QC Flags"])
 
 # ============================ REVIEW ============================
 with tab_review:
-    st.caption(f"**{len(fdf)}** measurements · target **{sel_target}**" +
+    st.caption(f"**{len(work)}** measurements · target **{sel_target}**" +
                (f" · {len(sel_exps)} experiment(s)" if sel_exps else " · all experiments") +
                (f" · filtered by {', '.join(active_checks)}" if active_checks else ""))
 
@@ -347,10 +347,16 @@ with tab_review:
             ".ag-header-cell-text": {"white-space": "nowrap !important", "font-size": "12px !important"},
             ".ag-header-cell": {"padding-left": "6px !important", "padding-right": "4px !important"},
         }
+        # st_aggrid keeps stale data when the dataframe shrinks under a fixed key;
+        # remount the grid whenever the filter set changes so the table re-renders
+        import hashlib as _hl
+        _filt_sig = _hl.md5(repr((sel_target, sel_kind, search, collapse_reps,
+                                  tuple(sorted(active_checks)), tuple(sorted(sel_exps)),
+                                  len(view))).encode()).hexdigest()[:10]
         grid = AgGrid(view, gridOptions=gb.build(), height=540, theme=AGGRID_THEME,
                       update_on=["selectionChanged", "cellClicked", "cellValueChanged"],
                       custom_css=header_css, fit_columns_on_grid_load=False,
-                      allow_unsafe_jscode=True, key="aggrid_browse")
+                      allow_unsafe_jscode=True, key=f"aggrid_browse_{_filt_sig}")
         # sync the editable "flagged" checkboxes back into the override store
         gdata = grid.get("data")
         if gdata is not None:
